@@ -30,7 +30,7 @@ async Task Main()
 	//----------------------------------------------------------------------//
 
 	var results = client.Users["@eastdilsecured.com"]
-		.CalendarView
+		.CalendarView		
 		.Request(new Option[]
 		{
 			new QueryOption("startdatetime", "2022-01-13T19:00:00-08:00"),
