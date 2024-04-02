@@ -2,6 +2,7 @@
   <Namespace>System.Net.Quic</Namespace>
   <Namespace>System.Threading.Tasks</Namespace>
   <Namespace>System.Net</Namespace>
+  <Namespace>System.Security.Authentication</Namespace>
 </Query>
 
 async Task Main()
@@ -19,7 +20,7 @@ async Task Main()
 				ServerAuthenticationOptions = new()
 				{
 					AllowRenegotiation = true,
-					EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13,
+					EnabledSslProtocols = SslProtocols.Tls13,
 					ApplicationProtocols = new()
 					{
 						System.Net.Security.SslApplicationProtocol.Http3
@@ -43,8 +44,9 @@ async Task Main()
 	{
 		var connection = await quic.AcceptConnectionAsync();
 		
-		
+
 		var stream = await connection.AcceptInboundStreamAsync();
+
 	}
 	
 	await quic.DisposeAsync();
