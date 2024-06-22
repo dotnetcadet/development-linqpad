@@ -4,26 +4,27 @@
   <Namespace>Azure.Data.Tables</Namespace>
   <Namespace>Microsoft.Extensions.DependencyInjection</Namespace>
   <Namespace>Azure</Namespace>
+  <Namespace>System.Security.Cryptography</Namespace>
+  <Namespace>System.Collections.Concurrent</Namespace>
 </Query>
-
-
 
 void Main()
 {
+
 	
 	var test = new TableStorageQueryable<Person>();
 	
-	test.Where(x=>x.FirstName == "Chase").ToArray();
+	test.Where(x=>x.FirstName == "Chase").Skip(0).Take(20).ToArray();
 }
 
-public class Person 
+public class Person : TableStorageEntity<Person>
 {
 	public string FirstName { get; set; }
 }
 
 
 
-internal class TableStorageEntity<TEntity> : ITableEntity
+public class TableStorageEntity<TEntity> : ITableEntity
 {
 	public string PartitionKey { get; set; }
 	public string RowKey { get; set; }
@@ -33,80 +34,63 @@ internal class TableStorageEntity<TEntity> : ITableEntity
 }
 
 internal class TableStorageQueryable<T> : IQueryable<T>, IQueryProvider
+	where T : class, ITableEntity
 {
 	private readonly Expression expression;
 	private readonly TableClient client;
+
+	public TableStorageQueryable()
+	{
+		this.expression = Expression.Constant(this);
+	}
 	
+	
+	private int skip;
+	private int take = 50;
 	private string filter;
 	
 	
-	public TableStorageQueryable()
+	private IQueryable ParseSkip(MethodCallExpression expression)
 	{
-		this.expression = System.Linq.Expressions.Expression.Constant(this);
-	}
-	
-	
-	
-	public IQueryable CreateQuery(Expression expression)
-	{
-		switch (expression)
+		if (expression.Arguments.Last() is ConstantExpression constant)
 		{
-			case MethodCallExpression methodCall when (methodCall.Method.Name == "Where"):
-				{
-					Expression<Func<TableStorageEntity<T>, T>> member = e => e.Entity;
-					
-					var filter = ((methodCall.Arguments
-						?.First(x => x is UnaryExpression) as UnaryExpression)
-						?.Operand as LambdaExpression) as Expression<Func<T, bool>>;
-
-					if (filter is null)
-					{
-						throw new NotSupportedException();
-					}
-					
-					
-
-					var invocation = Expression.Invoke(filter, member.Body);
-					var predicate = Expression.Lambda<Func<TableStorageEntity<T>, bool>>(invocation, member.Parameters);
-					
-					var builder = new ExpressionBuilder<TableStorageEntity<T>>();
-					
-					
-
-					this.filter = TableClient.CreateQueryFilter<TableStorageEntity<T>>(test);
-					break;
-				}
-			case UnaryExpression unary:
-				{
-					CreateQuery(unary.Operand);
-					break;
-				}
-			case LambdaExpression lambda:
-				{
-					if (lambda is Expression<Func<T, bool>> filter)
-					{
-						this.filter = TableClient.CreateQueryFilter<TableStorageEntity<T>>(x => filter.Compile().Invoke(x.Entity));
-					}
-					break;
-				}
-			case ConstantExpression constant: 
-				{
-					
-					break;
-				}
-			case MethodCallExpression methodCall when (methodCall.Method.Name == "Select"):
-				{
-					break;
-				}
-			default: 
-			{
-				throw new NotSupportedException();	
-			}
+			skip = (int)constant.Value;
 		}
-		
+		return this;
+	}
+	private IQueryable ParseTake(MethodCallExpression expression)
+	{
+		if (expression.Arguments.Last() is ConstantExpression constant)
+		{
+			take = (int)constant.Value;
+		}
+		return this;
+	}
+	private IQueryable ParseWhere(MethodCallExpression expression)
+	{
+		if (expression.Arguments.Last() is UnaryExpression unary && unary.Operand is Expression<Func<T, bool>> lambda1)
+		{
+			filter = TableClient.CreateQueryFilter(lambda1);
+		}
+		else if (expression.Arguments.Last() is Expression<Func<T, bool>> lambda2)
+		{
+			filter = TableClient.CreateQueryFilter(lambda2);
+		}
 		return this;
 	}
 
+	public IQueryable CreateQuery(Expression expression)
+	{
+		return expression switch 
+		{
+			MethodCallExpression methodCall when methodCall.Method.Name == "Skip" => ParseSkip(methodCall),
+			MethodCallExpression methodCall when methodCall.Method.Name == "Take" => ParseTake(methodCall),
+			MethodCallExpression methodCall when methodCall.Method.Name == "Where" => ParseWhere(methodCall),
+			MethodCallExpression methodCall when methodCall.Method.Name == "Select" => ParseWhere(methodCall),
+			
+			_ => throw new InvalidOperationException("Unsupported Operation")
+		};
+	}
 	public IQueryable<TElement> CreateQuery<TElement>(Expression expression)
 	{
 		if (this is not IQueryable<TElement> element)
@@ -121,29 +105,104 @@ internal class TableStorageQueryable<T> : IQueryable<T>, IQueryProvider
 	{
 		throw new NotImplementedException();
 	}
-
 	public TResult Execute<TResult>(Expression expression)
 	{
 		throw new NotImplementedException();
 	}
 
-
-
 	public Type ElementType => typeof(T);
 	public Expression Expression => this.expression;
 	public IQueryProvider Provider =>  this;
 
+
+	private static ConcurrentDictionary<string, Pageable<T>> cache = new();
+	
+	
 	public IEnumerator<T> GetEnumerator()
 	{
-		throw new NotImplementedException();
+		using (var sha256 = SHA256.Create())
+		{
+			var bytes = Encoding.UTF8.GetBytes(filter + $" take {take}");
+
+			// ComputeHash - returns byte array  
+			var hashArray = sha256.ComputeHash(bytes);
+
+			// Convert byte array to a string   
+			var builder = new StringBuilder();
+
+			for (int i = 0; i < hashArray.Length; i++)
+			{
+				builder.Append(hashArray[i].ToString("x2"));
+			}
+			
+			// Generate Query Hash
+			var hash = builder.ToString();
+
+			
+			var pagable = cache.GetOrAdd(hash, key => 
+			{
+				return client.Query<T>(filter: filter, maxPerPage: take);
+			});
+			
+			
+			return new TableStoragePagableEnumerator<T>(pagable, skip, take);
+
+		}
 	}
 
 	IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
+
+
+	partial class TableStoragePagableEnumerator<T> : IEnumerator<T>
+		where T : class, ITableEntity
+	{
+		private IEnumerator<T> page;
+
+		public TableStoragePagableEnumerator(Pageable<T> pageable, int skip, int take)
+		{
+			var pageIndex = 0;
+			var pageNumber = (skip / take);
+
+			// Check if the paging is starting on the first page
+			if (pageNumber == 0)
+			{
+				page = pageable.AsPages().First().Values.GetEnumerator();
+			}
+			if (pageNumber > 0)
+			{
+				string? continuationToken = null;
+
+				foreach (var result in pageable.AsPages(continuationToken))
+				{
+					continuationToken = result.ContinuationToken;
+
+					pageIndex++;
+
+					if (pageIndex == pageNumber)
+					{
+						break;
+					}
+				}
+			}
+		}
+
+		public T Current => page.Current;
+
+		object IEnumerator.Current => Current;
+
+		public void Dispose()
+		{
+			page.Dispose();
+		}
+
+		public bool MoveNext()
+		{
+			return page.MoveNext();
+		}
+
+		public void Reset()
+		{
+			page.Reset();
+		}
+	}
 }
-
-
-internal class TableStorageQueryableExpressionVisitor : ExpressionVisitor
-{
-	
-}
-

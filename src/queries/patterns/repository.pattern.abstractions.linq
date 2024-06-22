@@ -1,7 +1,6 @@
 <Query Kind="Program">
-  <Namespace>System.Collections.Concurrent</Namespace>
-  <Namespace>Xunit</Namespace>
   <Namespace>System.Threading.Tasks</Namespace>
+  <Namespace>Xunit</Namespace>
 </Query>
 
 #load "xunit"
@@ -9,274 +8,196 @@
 void Main()
 {
 	//RunTests();  // Call RunTests() or press Alt+Shift+T to initiate testing.
-
-	//var builder = RepositoryFactoryBuilder.Create();
 }
-
-
 
 #region Abstractions
 
-// Let's use generic Http Status Codes as Repository Error Code for easy conversion into HTTP Responses
-// We can create an adapter pattern to format the HTTP Response of Repository Error
-public enum RepositoryErrorCode
+public interface IRepository
 {
+
+}
+
+/// <summary>
+/// A simple repository for the data layer.
+/// </summary>
+public interface IRepository<T> : IRepository where T : class, new()
+{
+	/// <summary>
+	/// 
+	/// </summary>
+	Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
+	/// <summary>
+	/// 
+	/// </summary>
+	Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
+	/// <summary>
+	/// 
+	/// </summary>
+	Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
+	/// <summary>
+	/// 
+	/// </summary>
+	Task<T> UpdateAsync(object[] keys, Action<T> configure, CancellationToken cancellationToken = default);
+}
+/// <summary>
+/// A repository for batching operations to the data layer.
+/// </summary>
+public interface IBatchRepository<T> : IRepository<T> where T : class, new()
+{
+	IBatchRepositoryContext<T> CreateBatchContext();
+}
+/// <summary>
+/// 
+/// </summary>
+/// <remarks>
+/// On 
+/// </remarks>
+public interface IBatchRepositoryContext<T> : IAsyncDisposable where T : class, new()
+{
+	Task CreateAsync(T entity);
+	Task DeleteAsync(object[] keys);
+	Task UpdateAsync(object[] keys, Action<T> entity);
+	Task<IBatchResult<T>> ExecuteAsync();
+}
+public interface IBatchResult<T> where T : class, new()
+{
+
+}
+public interface IBatchResultChange<T>
+{
+	Exception Error { get; }
+	StateChange Change { get; }
+	T State { get; }
+}
+public enum StateChange
+{
+	Unknown,
+	Failure,
+	Update,
+	Delete,
+	Create
+}
+/// <summary>
+/// 
+/// </summary>
+public interface IQueryableRepository<T> : IRepository<T>, IQueryable<T> where T : class, new()
+{
+
+}
+public interface IQueryableResult<T> where T : class, new()
+{
+	long Count { get; }
+}
+public interface IBulkOperationRepository<T> : IRepository<T> where T : class, new()
+{
+	Task<int> DeleteAsync(Expression<Func<T, bool>> predicate);
+	Task<int> UpdateAsync(Expression<Func<T, bool>> predicate);
+	Task<int> ExecuteAsync(string operationName, object[]? arguments = default, CancellationToken cancellationToken = default);
+}
+public abstract class Repository<T> : IBulkOperationRepository<T>, IQueryableRepository<T>, IBatchRepository<T> where T : class, new()
+{
+	public abstract Type ElementType { get; }
+	public abstract Expression Expression { get; }
+	public abstract IQueryProvider Provider { get; }
+
+	public abstract Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
+	public abstract IBatchRepositoryContext<T> CreateBatchContext();
+	public abstract Task<int> DeleteAsync(Expression<Func<T, bool>> predicate);
+	public abstract Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
+	public abstract Task<int> ExecuteAsync(string operationName, object[]? arguments = null, CancellationToken cancellationToken = default);
+	public abstract Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
+	public abstract IEnumerator<T> GetEnumerator();
+	public abstract Task<int> UpdateAsync(Expression<Func<T, bool>> predicate);
+	public abstract Task<T> UpdateAsync(object[] keys, Action<T> configure, CancellationToken cancellationToken = default);
+
+	IEnumerator IEnumerable.GetEnumerator()
+	{
+		return GetEnumerator();
+	}
+}
+#endregion
+
+#region Exceptions
+/// <summary>
+/// 
+/// </summary>
+public abstract class RepositoryException : Exception
+{
+	public RepositoryException(string message)
+		: base(message) { }
+
+	public RepositoryException(string message, Exception innerException)
+		: base(message, innerException) { }
+
+
+	public abstract ErrorCode Code { get; }
+
+	public static RepositoryException NotFound(params object?[]? keys)
+	{
+		throw new DefaultRepositoryException($"", ErrorCode.NotFound);
+	}
+}
+
+internal sealed class DefaultRepositoryException : RepositoryException
+{
+	public DefaultRepositoryException(string message, ErrorCode errorCode)
+		: base(message)
+	{
+		Code = errorCode;
+	}
+
+	public DefaultRepositoryException(string message, ErrorCode errorCode, Exception innerException)
+		: base(message, innerException)
+	{
+		Code = errorCode;
+	}
+
+	public override ErrorCode Code { get; }
+}
+/// <summary>
+/// An error code which references an HTTP Status Code.
+/// </summary>
+public enum ErrorCode
+{
+
 	Unknown = 0,
 	NotFound = 404,
 	Conflict = 409,
 	PreconditionFailure = 412,
 	ToManyRequests = 429
 }
-public abstract class RepositoryException : Exception
-{
-	public abstract RepositoryErrorCode ErrorCode { get; }
-	public static RepositoryException NotFound(string message)=> new RepositoryExceptionDefault(RepositoryErrorCode.NotFound, message);
-	public static RepositoryException Conflict(string message) => new RepositoryExceptionDefault(RepositoryErrorCode.Conflict, message);
-	public static RepositoryException ToManyRequests(string message) => new RepositoryExceptionDefault(RepositoryErrorCode.ToManyRequests, message);
-	public static RepositoryException PreconditionFailure(string message) => new RepositoryExceptionDefault(RepositoryErrorCode.PreconditionFailure, message);
-}
-internal sealed class RepositoryExceptionDefault : RepositoryException
-{
-	public RepositoryExceptionDefault(RepositoryErrorCode errorCode)
-	{
-		this.ErrorCode = errorCode;
-	}
-	public RepositoryExceptionDefault(RepositoryErrorCode errorCode, string message) 
-	{
-		this.ErrorCode = errorCode;
-		this.Message = message;
-	}
-
-	public override RepositoryErrorCode ErrorCode { get; }
-	public override string Message { get; }
-}
-
-public interface IRepositoryFactoryBuilder
-{
-	IRepositoryFactoryBuilder Register(IRepository repository);
-	IRepositoryFactoryBuilder Register(IRepository repository, string repositoryName);
-	IRepositoryFactoryBuilder Register<TRepository>() where TRepository : IRepository, new();
-	IRepositoryFactoryBuilder Register<TRepository>(string repositoryName) where TRepository : IRepository, new();
-	IRepositoryFactory Build();
-}
-public interface IRepositoryFactory
-{
-	IRepository<T> Create<T>();
-	IRepository Create(string repositoryName);
-	IRepository<T> Create<T>(string repositoryName);
-}
-public interface IRepository
-{
-	Task<IRepositoryResult> GetAsync(object[] keys, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult> CreateAsync(RepositoryContext context, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult> UpdateAsync(RepositoryContext context, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult> UpsertAsync(RepositoryContext context, CancellationToken cancellationToken = default);
-	IRepositoryBulkOperation GetBulkOperations(IEnumerable<RepositoryContext> contexts);
-}
-public interface IRepository<T> : IRepository
-{
-	Task<IRepositoryResult<T>> GetAsync(object[] keys, CancellationToken cancellationToken = default);	
-	Task<IRepositoryResult<T>> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);	
-	Task<IRepositoryResult<T>> CreateAsync(RepositoryContext<T> context, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult<T>> UpdateAsync(RepositoryContext<T> context, CancellationToken cancellationToken = default);
-	Task<IRepositoryResult<T>> UpsertAsync(RepositoryContext<T> context, CancellationToken cancellationToken = default);
-	IRepositoryCollectionResult<T> QueryAsync(IQueryable<T> queryable, CancellationToken cancellationToken = default);
-	
-	IRepositoryBulkOperation GetBulkOperations(IEnumerable<RepositoryContext<T>> contexts);
-}
-public interface IRepositoryResult
-{
-	object State { get; }
-	bool IsSuccess { get; }
-	Exception? Error { get; }
-}
-public interface IRepositoryResult<T> : IRepositoryResult
-{
-	T State { get; }
-}
-public interface IRepositoryCollectionResult<T> : IAsyncEnumerable<T>
-{
-	bool IsSuccess { get; }
-	Exception? Error { get; }
-}
-public interface IRepositoryBulkOperation
-{
-	Task<IRepositoryResult> ExecuteAsync();
-}
-
-
-public abstract class RepositoryContext
-{
-	public abstract object State { get; }
-}
-public abstract class RepositoryContext<T>
-{
-	public abstract T State { get; }
-	
-	public static implicit operator RepositoryContext<T>(T instance) => new RepositoryContextDefault<T>(instance);
-	public static implicit operator RepositoryContext<T>(RepositoryContext context)
-	{
-		if (context.State is T instance)
-		{
-			return new RepositoryContextDefault<T>(instance);
-		}
-
-		throw new InvalidCastException($"Unable to case type '{context.State.GetType().Name}' to '{nameof(T)}'.");
-	}
-}
-internal sealed class RepositoryContextDefault<T> : RepositoryContext<T>
-{
-	public RepositoryContextDefault(T state)
-	{
-		this.State = state;
-	}
-
-	public override T State { get; }
-}
-
 
 #endregion
 
-#region Extensions 
+#region Extensions
 
 public static class RepositoryExtensions
 {
-	public static Task<IRepositoryResult> GetAsync(this IRepository repository, params object[] keys) => repository.GetAsync(keys, default);
-	public static Task<IRepositoryResult<T>> GetAsync<T>(this IRepository<T> repository, params object[] keys) => repository.GetAsync(keys, default);
-	public static Task<IRepositoryResult> DeleteAsync(this IRepository repository, params object[] keys) => repository.DeleteAsync(keys, default);
-	public static Task<IRepositoryResult<T>> DeleteAsync<T>(this IRepository<T> repository, params object[] keys) => repository.DeleteAsync(keys, default);
+
 }
+
+#endregion
+
+#region Utilities
 
 
 #endregion
 
-#region implementation
-
-public sealed class RepositoryFactoryBuilder : IRepositoryFactoryBuilder
+#region Test Objects
+public class User
 {
-	// The Key for this dictionary will be the hashcode of the nameof() 
-	private readonly IDictionary<string, IRepository> repositories;
+	public UserInfo? Info { get; set; }
+}
+public class UserInfo
+{
 
-	public RepositoryFactoryBuilder()
-	{
-		this.repositories = new ConcurrentDictionary<string, IRepository>(StringComparer.InvariantCultureIgnoreCase);
-	}
-
-
-	public IRepositoryFactoryBuilder Register(IRepository repository)
-	{
-		var repositoryName = repository.GetType().Name;
-
-		repositories.Add(repositoryName, repository);
-
-		return this;
-	}
-	public IRepositoryFactoryBuilder Register(IRepository repository, string repositoryName)
-	{
-		repositories.Add(repositoryName, repository);
-
-		return this;
-	}
-	public IRepositoryFactoryBuilder Register<TRepository>() where TRepository : IRepository, new()
-	{
-		var repositoryName = typeof(TRepository).Name;
-
-		//repositories.AddOrUpdate(repositoryName.GetHashCode(), 
-
-		return this;
-	}
-
-	public IRepositoryFactoryBuilder Register<TRepository>(string repositoryName) where TRepository : IRepository, new()
-	{
-		return this;
-	}
-
-	IRepositoryFactory IRepositoryFactoryBuilder.Build()
-	{
-		return new RepositoryFactory(repositories);
-	}
-
-	public static IRepositoryFactoryBuilder Create() => new RepositoryFactoryBuilder();
 }
 
-
-
-public sealed class RepositoryFactory : IRepositoryFactory
-{
-	private readonly IDictionary<string, IRepository> repositories;
-
-	internal RepositoryFactory(IDictionary<string, IRepository> repositories)
-	{
-		this.repositories = repositories;
-	}
-
-	public IRepository<T> Create<T>()
-	{
-		throw new NotImplementedException();
-	}
-	public IRepository Create(string repositoryName)
-	{
-		throw new NotImplementedException();
-	}
-
-	public IRepository<T> Create<T>(string repositoryName)
-	{
-		var repository = repositories[repositoryName];
-
-		if (repository is IRepository<T> instance)
-		{
-			return instance;
-		}
-
-		throw new ArgumentException();
-	}
-}
-
-
-public sealed class RepositoryResult : IRepositoryResult
-{
-	public RepositoryResult() { }
-	public RepositoryResult(object state)
-	{
-		this.State = state;
-	}
-	public object State { get; init; }
-	public bool IsSuccess { get; init; }
-	public Exception Error { get; init; }
-}
-public sealed class RepositoryResult<T> : IRepositoryResult<T>
-{
-	
-	public RepositoryResult() { }
-	public RepositoryResult(T state)
-	{
-		this.State = state;
-	}
-	public T State { get; init; }
-	public bool IsSuccess { get; init; }
-	public Exception Error { get; init; }
-	object IRepositoryResult.State => this.State;
-	
-	
-	//public static implicit operator RepositoryResult<T>(T state) =>  new RepositoryResult<T>(state);
-}
-public class RepositoryCollectionResult<T> : IRepositoryCollectionResult<T>
-{
-	public bool IsSuccess => throw new NotImplementedException();
-
-	public Exception Error => throw new NotImplementedException();
-
-	public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-	{
-		throw new NotImplementedException();
-	}
-}
 
 #endregion
 
 #region private::Tests
 
-[Fact] void Test_Xunit() => Assert.True (1 + 1 == 2);
+[Fact] void Test_Xunit() => Assert.True(1 + 1 == 2);
 
 #endregion
