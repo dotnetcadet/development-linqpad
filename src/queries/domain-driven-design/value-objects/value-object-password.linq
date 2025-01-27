@@ -15,22 +15,7 @@ public readonly struct Password : IEquatable<Password>
 	private static readonly char[] characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+[]{}|;:,.<>?/`~".ToCharArray();
 	private static readonly byte[] salt = new byte[16]
 	{
-		0xAA,
-		0x38,
-		0x82,
-		0x8B,
-		0x89,
-		0x18,
-		0x7B,
-		0x02,
-		0xB3,
-		0x08,
-		0x87,
-		0xD7,
-		0xE0,
-		0x60,
-		0x2F,
-		0x79
+		0xAA, 0x38, 0x82, 0x8B, 0x89, 0x18, 0x7B, 0x02, 0xB3, 0x08, 0x87, 0xD7, 0xE0, 0x60, 0x2F, 0x79
 	};
 
 	public Password(string value)
@@ -42,12 +27,6 @@ public readonly struct Password : IEquatable<Password>
 		
 		Value = IsHashed(value) ? value : Hash(value);
 	}
-
-
-	private bool IsHashed(string value) => 
-		value.Length == 64 && (
-			Regex.IsMatch(value, "[0-9a-fA-F]+") || 	// Check if the string contains only hexadecimal characters
-			Regex.IsMatch(value, "[A-Za-z0-9+/=]+")); 	// Check if the string is base64 encoded
 
 	/// <summary>
 	/// The Hash value of the password.
@@ -79,13 +58,14 @@ public readonly struct Password : IEquatable<Password>
 	}
 	#endregion
 
+	#region Interface Implementation
 	/// <inheritdoc />
 	public bool Equals(Password other)
 	{
 		// We just need to compare the hash value
 		return Value == other.Value;
 	}
-
+	#endregion
 
 	#region Operators
 
@@ -161,7 +141,16 @@ public readonly struct Password : IEquatable<Password>
 			return Convert.ToBase64String(hashedPasswordWithSalt);
 		}
 	}
+
+	#endregion
+
+	#region Private
 	
+	private bool IsHashed(string value) =>
+		value.Length == 64 && (
+			Regex.IsMatch(value, "[0-9a-fA-F]+") ||     // Check if the string contains only hexadecimal characters
+			Regex.IsMatch(value, "[A-Za-z0-9+/=]+"));   // Check if the string is base64 encoded
+
 	#endregion
 }
 

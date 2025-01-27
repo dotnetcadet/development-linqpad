@@ -4,54 +4,33 @@
   <Namespace>System.Collections.Immutable</Namespace>
   <Namespace>System.Runtime.CompilerServices</Namespace>
   <Namespace>System.Diagnostics.CodeAnalysis</Namespace>
+  <Namespace>Xunit</Namespace>
 </Query>
+
+#load "xunit"
 
 void Main()
 {
-	
-	IEnumerable<User> users = [];
-	
-	
-	if (users is List<User>)
-	{
-		true.Dump();
-	}
-	
-	users.GetType().Dump();
-	
+	//RunTests();  // Call RunTests() or press Alt+Shift+T to initiate testing.
+
 	var user = new User()
 	{
 		Id = 10001,
-		Info = new UserInfo()
-		{
-			FirstName = "chase",
-			LastName = "crawford",
-			Email = "chase@email.com",
-			Password = new Password()
-			{
-				Value = "Testpwd123"
-			}
-		}
+		Info = new UserInfo("chase", "crawford", null, "ccrawford@assimalign.com")
 	};
+	
+	var role = new UserRole();
 
 
 	user.BeginTracking();
-	user.Info = new UserInfo()
-	{
-		FirstName = "Chase",
-		LastName = "Crawford",
-		Email = "chase@email.com",
-		Password = new Password()
-		{
-			Value = "Testpwd124"
-		}
-	};
+	user.Info = new UserInfo("Chase", "Crawford", null, "ccrawford@assimalign.com");
+
 	user.EndTracking();
 	user.GetChanges().Dump();
 
 
 
-	if (user.HasChanged(p=>p.Info!.Password!.Value, out var change))
+	if (user.HasChanged(p => p.Info!.Password!.Value, out var change))
 	{
 		change.Dump();
 	}
@@ -61,11 +40,10 @@ void Main()
 
 #region Entity::TestObject
 
-public class User : Entity<User>
+public class User : Entity<User, int>
 {
 	private UserInfo? info;
 
-	public int Id { get; set; }
 	public UserInfo? Info
 	{
 		get => info;
@@ -76,31 +54,27 @@ public class User : Entity<User>
 			EndPropertyChange();
 		}
 	}
+	public UserAuditEntry? Created { get; set; }
+	public UserAuditEntry? Updated { get; set; }
 }
-public record UserInfo
+public class UserRole : Entity<UserRole, int>
 {
-	public string? FirstName { get; set; }
-	public string? LastName { get; set; }
-	public string? MiddleName { get; set; }
-	public string? Email { get; set; }
-	public Password? Password { get; set; }
+	
 }
-
-public record Password
+public record UserInfo(string? FirstName, string? LastName, string? MiddleName, string? Email)
 {
-	public string Value { get; set; }
+	public DateOnly Birthdate { get; set; }
 }
-
-
+public record UserAuditEntry(DateTime TimeStamp, string UserId);
 
 
 
 #endregion
 
-
 #region Entity::Abstractions
 
-public enum EntityChangeType
+
+public enum ChangeKind
 {
 	None = 0,
 	Added,
@@ -113,11 +87,11 @@ public class EntityChange
 	/// <summary>
 	/// The name of the property that changes.
 	/// </summary>
-	public string? PropertyName { get; set; }
+	public string? Property { get; set; }
 	/// <summary>
 	/// Specifies the type of change that occurred on the property.
 	/// </summary>
-	public EntityChangeType ChangeType { get; set; }
+	public ChangeKind Kind { get; set; }
 	/// <summary>
 	/// Represents the current state of the
 	/// </summary>
@@ -131,19 +105,17 @@ public class EntityChange
 	/// </summary>
 	internal bool HasChanged { get; set; }
 }
-
-
 public class EntityChange<T> : EntityChange
 {
 	public new T? Current { get; set; }
-
 	public new T? Original { get; set; }
 }
 
-
-
-
-public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>
+public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T, TKey> : Entity<T> where T : class where TKey : struct
+{
+	public virtual TKey Id { get; set; }
+}
+public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T> where T : class
 {
 	// This will specify whether to start tracking changes.
 	private bool isTracking;
@@ -220,8 +192,8 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 				{
 					Original = (TValue)value.Original!,
 					Current = (TValue)value.Current!,
-					ChangeType = value.ChangeType,
-					PropertyName = value.PropertyName
+					Kind = value.Kind,
+					Property = value.Property
 				};
 				return true;
 			}
@@ -259,7 +231,7 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 
 		changes[propertyName] = new EntityChange()
 		{
-			PropertyName = propertyName,
+			Property = propertyName,
 			Original = propertyValue
 		};
 	}
@@ -310,17 +282,17 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 			// Added
 			else if (original is null && current is not null)
 			{
-				entityChange.ChangeType = EntityChangeType.Added;
+				entityChange.Kind = ChangeKind.Added;
 			}
 			// Removed
 			else if (original is not null && current is null)
 			{
-				entityChange.ChangeType = EntityChangeType.Removed;
+				entityChange.Kind = ChangeKind.Removed;
 			}
 			// Updated
 			else if (!Nullable.Equals(original, current))
 			{
-				entityChange.ChangeType = EntityChangeType.Updated;
+				entityChange.Kind = ChangeKind.Updated;
 			}
 			// No change
 			else
@@ -339,7 +311,7 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 			// there should only ever be an update
 			else if (!original.Equals(current))
 			{
-				entityChange.ChangeType = EntityChangeType.Updated;
+				entityChange.Kind = ChangeKind.Updated;
 			}
 			else
 			{
@@ -357,17 +329,17 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 			// Added
 			else if (original is null && current is not null)
 			{
-				entityChange.ChangeType = EntityChangeType.Added;
+				entityChange.Kind = ChangeKind.Added;
 			}
 			// Removed
 			else if (original is not null && current is null)
 			{
-				entityChange.ChangeType = EntityChangeType.Removed;
+				entityChange.Kind = ChangeKind.Removed;
 			}
 			// Updated
 			else if (!original.Equals(current))
 			{
-				entityChange.ChangeType = EntityChangeType.Updated;
+				entityChange.Kind = ChangeKind.Updated;
 			}
 			// No change
 			else
@@ -408,7 +380,7 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 
 			changes[childName] = new EntityChange()
 			{
-				PropertyName = childName,
+				Property = childName,
 				Original = childValue
 			};
 		}
@@ -461,17 +433,17 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 				// Added
 				else if (original is null && current is not null)
 				{
-					entityChange.ChangeType = EntityChangeType.Added;
+					entityChange.Kind = ChangeKind.Added;
 				}
 				// Removed
 				else if (original is not null && current is null)
 				{
-					entityChange.ChangeType = EntityChangeType.Removed;
+					entityChange.Kind = ChangeKind.Removed;
 				}
 				// Updated
 				else if (!Nullable.Equals(original, current))
 				{
-					entityChange.ChangeType = EntityChangeType.Updated;
+					entityChange.Kind = ChangeKind.Updated;
 				}
 				// No change
 				else
@@ -490,7 +462,7 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 				// there should only ever be an update
 				else if (!original.Equals(current))
 				{
-					entityChange.ChangeType = EntityChangeType.Updated;
+					entityChange.Kind = ChangeKind.Updated;
 				}
 				else
 				{
@@ -508,17 +480,17 @@ public abstract partial class Entity<[DynamicallyAccessedMembers(DynamicallyAcce
 				// Added
 				else if (original is null && current is not null)
 				{
-					entityChange.ChangeType = EntityChangeType.Added;
+					entityChange.Kind = ChangeKind.Added;
 				}
 				// Removed
 				else if (original is not null && current is null)
 				{
-					entityChange.ChangeType = EntityChangeType.Removed;
+					entityChange.Kind = ChangeKind.Removed;
 				}
 				// Updated
 				else if (!original.Equals(current))
 				{
-					entityChange.ChangeType = EntityChangeType.Updated;
+					entityChange.Kind = ChangeKind.Updated;
 				}
 				// No change
 				else
@@ -548,5 +520,11 @@ public abstract partial class Entity<T> : INotifyPropertyChanging, INotifyProper
 		remove => this.propertyChanged -= value;
 	}
 }
+
+#endregion
+
+#region Entity::Tests
+
+[Fact] void Test_Xunit() => Assert.True (1 + 1 == 2);
 
 #endregion

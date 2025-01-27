@@ -146,7 +146,6 @@ internal class TableStorageQueryable<T> : IQueryable<T>, IQueryProvider
 			
 			
 			return new TableStoragePagableEnumerator<T>(pagable, skip, take);
-
 		}
 	}
 

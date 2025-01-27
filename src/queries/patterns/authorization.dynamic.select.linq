@@ -47,7 +47,7 @@ void Main()
 	employees.Select(x=> new
 	{
 		
-	})
+	});
 }
 
 

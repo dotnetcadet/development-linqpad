@@ -10,111 +10,103 @@ void Main()
 	//RunTests();  // Call RunTests() or press Alt+Shift+T to initiate testing.
 }
 
+public abstract class Entity<T> 
+{
+	
+}
+
 #region Abstractions
 
 public interface IRepository
 {
-
+	Task<object> GetAsync(object[] keys, CancellationToken cancellationToken = default);
+	Task<object> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
+	Task<object> UpdateAsync(object[] keys, Action<object> configure, CancellationToken cancellationToken = default);
+	Task<object> CreateAsync(object entity, CancellationToken cancellationToken = default);
 }
-
-/// <summary>
-/// A simple repository for the data layer.
-/// </summary>
-public interface IRepository<T> : IRepository where T : class, new()
+public interface IRepository<T> : IRepository where T : Entity<T>, new()
 {
-	/// <summary>
-	/// 
-	/// </summary>
-	Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
-	/// <summary>
-	/// 
-	/// </summary>
-	Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
-	/// <summary>
-	/// 
-	/// </summary>
-	Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
-	/// <summary>
-	/// 
-	/// </summary>
+	new Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
+	new Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
 	Task<T> UpdateAsync(object[] keys, Action<T> configure, CancellationToken cancellationToken = default);
+	Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
+	IRepositoryBatchContext<T> CreateBatchContext();
 }
-/// <summary>
-/// A repository for batching operations to the data layer.
-/// </summary>
-public interface IBatchRepository<T> : IRepository<T> where T : class, new()
-{
-	IBatchRepositoryContext<T> CreateBatchContext();
-}
-/// <summary>
-/// 
-/// </summary>
-/// <remarks>
-/// On 
-/// </remarks>
-public interface IBatchRepositoryContext<T> : IAsyncDisposable where T : class, new()
-{
-	Task CreateAsync(T entity);
-	Task DeleteAsync(object[] keys);
-	Task UpdateAsync(object[] keys, Action<T> entity);
-	Task<IBatchResult<T>> ExecuteAsync();
-}
-public interface IBatchResult<T> where T : class, new()
+public interface IQueryableRepository<T> : IRepository<T>, IQueryable<T> where T : Entity<T>, new()
 {
 
 }
-public interface IBatchResultChange<T>
+public interface IIncludableRepository<T> : IQueryable<T>, IRepository where T : class, new()
 {
-	Exception Error { get; }
-	StateChange Change { get; }
-	T State { get; }
+	IIncludableRepository<T, TProperty> Include<TProperty>(
+		Expression<Func<T, IEnumerable<TProperty>>> navigation)
+		where TProperty : class, new();
 }
-public enum StateChange
+public interface IIncludableRepository<T, TProperty> : IIncludableRepository<T> where TProperty : class, new() where T : class, new()
 {
-	Unknown,
-	Failure,
-	Update,
-	Delete,
-	Create
+	IIncludableRepository<TProperty, TNested> ThenInclude<TNested>(
+		Expression<Func<TProperty, IEnumerable<TNested>>> navigation)
+		where TNested : class, new();
 }
-/// <summary>
-/// 
-/// </summary>
-public interface IQueryableRepository<T> : IRepository<T>, IQueryable<T> where T : class, new()
-{
-
-}
-public interface IQueryableResult<T> where T : class, new()
-{
-	long Count { get; }
-}
-public interface IBulkOperationRepository<T> : IRepository<T> where T : class, new()
+public interface IBulkOperationRepository<T> : IRepository<T> where T : Entity<T>, new()
 {
 	Task<int> DeleteAsync(Expression<Func<T, bool>> predicate);
 	Task<int> UpdateAsync(Expression<Func<T, bool>> predicate);
 	Task<int> ExecuteAsync(string operationName, object[]? arguments = default, CancellationToken cancellationToken = default);
 }
-public abstract class Repository<T> : IBulkOperationRepository<T>, IQueryableRepository<T>, IBatchRepository<T> where T : class, new()
+public interface IBulkOperation
 {
-	public abstract Type ElementType { get; }
-	public abstract Expression Expression { get; }
-	public abstract IQueryProvider Provider { get; }
-
-	public abstract Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
-	public abstract IBatchRepositoryContext<T> CreateBatchContext();
-	public abstract Task<int> DeleteAsync(Expression<Func<T, bool>> predicate);
-	public abstract Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
-	public abstract Task<int> ExecuteAsync(string operationName, object[]? arguments = null, CancellationToken cancellationToken = default);
-	public abstract Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
-	public abstract IEnumerator<T> GetEnumerator();
-	public abstract Task<int> UpdateAsync(Expression<Func<T, bool>> predicate);
-	public abstract Task<T> UpdateAsync(object[] keys, Action<T> configure, CancellationToken cancellationToken = default);
-
-	IEnumerator IEnumerable.GetEnumerator()
-	{
-		return GetEnumerator();
-	}
+	string Name { get; }
+	Task<int> InvokeAsync(object[]? args = default, CancellationToken cancellationToken = default);
 }
+
+
+public interface IRepositoryBatchContext<T> where T : Entity<T>, new()
+{
+	Task CreateAsync(T entity);
+	Task DeleteAsync(object[] keys);
+	Task UpdateAsync(object[] keys, Action<T> entity);
+	Task<IEnumerable<IBatchResult<T>>> ExecuteAsync();
+}
+public interface IBatchResult<T> where T : Entity<T>, new()
+{
+	BatchResultState State { get; }
+	T Entity { get; }
+}
+public enum BatchResultState
+{
+	Failed,
+	Created,
+	Updated,
+	Deleted
+}
+
+public abstract class RepositoryContext
+{
+	public object? Entity { get; }
+}
+public abstract class RepositoryContext<T> : RepositoryContext where T : Entity<T>, new()
+{
+	public new abstract T Entity { get; }
+
+
+	public static implicit operator RepositoryContext<T>(T entity) => new RepositoryContextDefault<T>(entity);
+}
+
+#endregion
+
+#region Internals 
+
+internal class RepositoryContextDefault<T> : RepositoryContext<T> where T : Entity<T>, new()
+{
+	public RepositoryContextDefault(T entity)
+	{
+		Entity = entity;
+	}
+
+	public override T Entity  { get; }
+}
+
 #endregion
 
 #region Exceptions
@@ -159,7 +151,6 @@ internal sealed class DefaultRepositoryException : RepositoryException
 /// </summary>
 public enum ErrorCode
 {
-
 	Unknown = 0,
 	NotFound = 404,
 	Conflict = 409,
