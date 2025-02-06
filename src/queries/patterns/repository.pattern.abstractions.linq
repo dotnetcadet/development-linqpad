@@ -7,24 +7,25 @@
 
 void Main()
 {
+	
 	//RunTests();  // Call RunTests() or press Alt+Shift+T to initiate testing.
 }
 
-public abstract class Entity<T> 
+public interface IEntity<T> where T : IEntity<T>, new()
 {
 	
 }
-
 #region Abstractions
 
 public interface IRepository
-{
+{	
+	string Name { get; }
 	Task<object> GetAsync(object[] keys, CancellationToken cancellationToken = default);
 	Task<object> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
 	Task<object> UpdateAsync(object[] keys, Action<object> configure, CancellationToken cancellationToken = default);
 	Task<object> CreateAsync(object entity, CancellationToken cancellationToken = default);
 }
-public interface IRepository<T> : IRepository where T : Entity<T>, new()
+public interface IRepository<T> : IRepository where T : IEntity<T>, new()
 {
 	new Task<T> GetAsync(object[] keys, CancellationToken cancellationToken = default);
 	new Task<T> DeleteAsync(object[] keys, CancellationToken cancellationToken = default);
@@ -32,9 +33,9 @@ public interface IRepository<T> : IRepository where T : Entity<T>, new()
 	Task<T> CreateAsync(T entity, CancellationToken cancellationToken = default);
 	IRepositoryBatchContext<T> CreateBatchContext();
 }
-public interface IQueryableRepository<T> : IRepository<T>, IQueryable<T> where T : Entity<T>, new()
+public interface IQueryableRepository<T> : IRepository<T>, IQueryable<T> where T : IEntity<T>, new()
 {
-
+	
 }
 public interface IIncludableRepository<T> : IQueryable<T>, IRepository where T : class, new()
 {
@@ -48,7 +49,7 @@ public interface IIncludableRepository<T, TProperty> : IIncludableRepository<T> 
 		Expression<Func<TProperty, IEnumerable<TNested>>> navigation)
 		where TNested : class, new();
 }
-public interface IBulkOperationRepository<T> : IRepository<T> where T : Entity<T>, new()
+public interface IBulkOperationRepository<T> : IRepository<T> where T : IEntity<T>, new()
 {
 	Task<int> DeleteAsync(Expression<Func<T, bool>> predicate);
 	Task<int> UpdateAsync(Expression<Func<T, bool>> predicate);
@@ -59,16 +60,24 @@ public interface IBulkOperation
 	string Name { get; }
 	Task<int> InvokeAsync(object[]? args = default, CancellationToken cancellationToken = default);
 }
-
-
-public interface IRepositoryBatchContext<T> where T : Entity<T>, new()
+public interface IRepositoryFactory 
+{
+	IRepository Create(string name);
+	
+	TRepository Create<TRepository>() 
+		where TRepository : IRepository;
+		
+	TRepository Create<TRepository>(string name) 
+		where TRepository : IRepository;
+}
+public interface IRepositoryBatchContext<T> where T : IEntity<T>, new()
 {
 	Task CreateAsync(T entity);
 	Task DeleteAsync(object[] keys);
 	Task UpdateAsync(object[] keys, Action<T> entity);
 	Task<IEnumerable<IBatchResult<T>>> ExecuteAsync();
 }
-public interface IBatchResult<T> where T : Entity<T>, new()
+public interface IBatchResult<T> where T : IEntity<T>, new()
 {
 	BatchResultState State { get; }
 	T Entity { get; }
@@ -81,23 +90,11 @@ public enum BatchResultState
 	Deleted
 }
 
-public abstract class RepositoryContext
-{
-	public object? Entity { get; }
-}
-public abstract class RepositoryContext<T> : RepositoryContext where T : Entity<T>, new()
-{
-	public new abstract T Entity { get; }
-
-
-	public static implicit operator RepositoryContext<T>(T entity) => new RepositoryContextDefault<T>(entity);
-}
-
 #endregion
 
 #region Internals 
 
-internal class RepositoryContextDefault<T> : RepositoryContext<T> where T : Entity<T>, new()
+internal class RepositoryContextDefault<T> : RepositoryContext<T> where T : IEntity<T>, new()
 {
 	public RepositoryContextDefault(T entity)
 	{
@@ -164,6 +161,19 @@ public enum ErrorCode
 
 public static class RepositoryExtensions
 {
+	public static bool IsQueryable<T>(this IRepository<T> repository, out IQueryableRepository<T>? queryable)
+		where T : IEntity<T>, new()
+	{
+		queryable = null;
+		
+		if (repository is IQueryableRepository<T> type)
+		{
+			queryable = type;
+			return true;
+		}
+		
+		return false;
+	}
 
 }
 
